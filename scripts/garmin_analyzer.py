@@ -766,10 +766,339 @@ class GarminAnalyzer:
             period_comparison={}
         )
 
+    # ─── 模块 G: 饮水与恢复 ───────────────────────────
+
+    def analyze_hydration(self) -> ModuleReport:
+        """分析饮水数据"""
+        records = self.dataset.hydration_records
+        recent, previous, period_start = _split_recent(records)
+
+        r_intake = _avg([r.value_in_ml for r in recent])
+        r_sweat = _avg([r.sweat_loss_ml for r in recent])
+        r_goal = _avg([r.goal_in_ml for r in recent if r.goal_in_ml])
+
+        p_intake = _avg([r.value_in_ml for r in previous])
+
+        key_metrics = [
+            {"name": "日均饮水", "value": f"{r_intake:.0f}" if r_intake else "N/A",
+             "unit": "ml", "trend": _trend_direction(r_intake, p_intake)},
+            {"name": "日均出汗量", "value": f"{r_sweat:.0f}" if r_sweat else "N/A",
+             "unit": "ml", "trend": "stable"},
+            {"name": "饮水目标", "value": f"{r_goal:.0f}" if r_goal else "N/A",
+             "unit": "ml", "trend": "stable"},
+        ]
+
+        # 达标率
+        if recent and r_goal:
+            goal_met_days = sum(1 for r in recent if r.value_in_ml and r.goal_in_ml and r.value_in_ml >= r.goal_in_ml)
+            goal_met_pct = goal_met_days / len(recent) * 100
+            key_metrics.append({
+                "name": "饮水达标率", "value": f"{goal_met_pct:.0f}%",
+                "unit": "", "trend": "stable"
+            })
+        else:
+            goal_met_pct = None
+
+        insights = []
+
+        # 饮水不足
+        if r_intake and r_goal and r_intake < r_goal * 0.6:
+            insights.append(Insight(
+                category="hydration", indicator="intake",
+                trend="down" if p_intake and r_intake < p_intake else "stable",
+                severity="warning",
+                value_current=f"{r_intake:.0f} ml/天",
+                value_previous=f"{p_intake:.0f} ml/天" if p_intake else "N/A",
+                summary="饮水量明显不足",
+                detail=f"日均饮水 {r_intake:.0f} ml，远低于目标 {r_goal:.0f} ml",
+                recommendation="建议设置定时提醒，每小时饮水 200ml，运动后额外补充"
+            ))
+        elif r_intake and r_goal and r_intake >= r_goal * 0.9:
+            insights.append(Insight(
+                category="hydration", indicator="intake",
+                trend="up" if p_intake and r_intake > p_intake else "stable",
+                severity="positive",
+                value_current=f"{r_intake:.0f} ml/天",
+                value_previous=f"{p_intake:.0f} ml/天" if p_intake else "N/A",
+                summary="饮水量充足",
+                detail=f"日均饮水 {r_intake:.0f} ml，接近或达到目标 {r_goal:.0f} ml",
+                recommendation="保持良好饮水习惯，运动日适当增加"
+            ))
+
+        # 出汗量 vs 饮水 (恢复缺口)
+        if r_sweat and r_intake and r_sweat > r_intake:
+            gap = r_sweat - r_intake
+            insights.append(Insight(
+                category="hydration", indicator="sweat_gap",
+                trend="stable", severity="warning",
+                value_current=f"出汗{r_sweat:.0f}ml > 饮水{r_intake:.0f}ml",
+                value_previous="",
+                summary="运动出汗量超过饮水量",
+                detail=f"日均出汗 {r_sweat:.0f} ml 但仅饮水 {r_intake:.0f} ml，缺口 {gap:.0f} ml",
+                recommendation="运动后及时补充电解质饮料，避免脱水影响恢复"
+            ))
+
+        return ModuleReport(
+            module_name="hydration",
+            title="饮水与恢复 / Hydration & Recovery",
+            data_overview={"总记录": len(records), "分析期间": f"最近30天({len(recent)}天) vs 之前30天({len(previous)}天)"},
+            key_metrics=key_metrics,
+            insights=insights,
+            period_comparison={"recent_avg_ml": r_intake, "previous_avg_ml": p_intake}
+        )
+
+    # ─── 模块 H: 训练准备度 ───────────────────────────────
+
+    def analyze_training_readiness(self) -> ModuleReport:
+        """分析训练准备度"""
+        records = self.dataset.training_readiness_records
+        recent, previous, period_start = _split_recent(records)
+
+        r_score = _avg([r.score for r in recent])
+        p_score = _avg([r.score for r in previous])
+
+        # 等级分布
+        level_counts = {}
+        for r in recent:
+            level = r.level or "UNKNOWN"
+            level_counts[level] = level_counts.get(level, 0) + 1
+
+        level_labels = {
+            "HIGH": "高", "MEDIUM": "中", "LOW": "低",
+            "UNKNOWN": "未知"
+        }
+
+        key_metrics = [
+            {"name": "平均训练准备度", "value": f"{r_score:.0f}" if r_score else "N/A",
+             "unit": "分", "trend": _trend_direction(r_score, p_score)},
+        ]
+
+        for level, count in sorted(level_counts.items(), key=lambda x: -x[1]):
+            key_metrics.append({
+                "name": f"  {level_labels.get(level, level)}",
+                "value": f"{count}天",
+                "unit": f"({count/len(recent)*100:.0f}%)" if recent else "",
+                "trend": "stable"
+            })
+
+        insights = []
+
+        # 准备度偏低
+        if r_score and r_score < 50:
+            insights.append(Insight(
+                category="training_readiness", indicator="readiness_score",
+                trend="down" if p_score and r_score < p_score else "stable",
+                severity="warning",
+                value_current=f"{r_score:.0f} 分",
+                value_previous=f"{p_score:.0f} 分" if p_score else "N/A",
+                summary="训练准备度偏低",
+                detail=f"近期平均训练准备度仅 {r_score:.0f}/100，身体未充分恢复",
+                recommendation="减少训练强度，增加休息和睡眠时间，待准备度回升后再增加训练量"
+            ))
+        elif r_score and r_score >= 75:
+            insights.append(Insight(
+                category="training_readiness", indicator="readiness_score",
+                trend="up" if p_score and r_score > p_score else "stable",
+                severity="positive",
+                value_current=f"{r_score:.0f} 分",
+                value_previous=f"{p_score:.0f} 分" if p_score else "N/A",
+                summary="训练准备度良好",
+                detail=f"近期平均训练准备度 {r_score:.0f}/100，身体恢复充分",
+                recommendation="可以安排高强度训练或比赛，充分利用良好的身体状态"
+            ))
+
+        # 交叉关联: 恢复时间因素
+        rt_good = sum(1 for r in recent if r.recovery_time_factor_feedback == "GOOD")
+        if recent and rt_good < len(recent) * 0.5:
+            insights.append(Insight(
+                category="training_readiness", indicator="recovery_time",
+                trend="stable", severity="info",
+                value_current=f"仅{rt_good}天恢复充分",
+                value_previous="",
+                summary="恢复时间不足影响训练准备度",
+                detail=f"最近{len(recent)}天中仅 {rt_good} 天恢复时间充足",
+                recommendation="在训练日之间安排充分的恢复日，避免连续高强度训练"
+            ))
+
+        return ModuleReport(
+            module_name="training_readiness",
+            title="训练准备度 / Training Readiness",
+            data_overview={"总记录": len(records), "分析期间": f"最近30天({len(recent)}天) vs 之前30天({len(previous)}天)"},
+            key_metrics=key_metrics,
+            insights=insights,
+            period_comparison={"recent_avg_score": r_score, "previous_avg_score": p_score}
+        )
+
+    # ─── 模块 I: VO2 Max 与训练负荷 ──────────────────────
+
+    def analyze_vo2max_and_load(self) -> ModuleReport:
+        """分析 VO2 Max 趋势与急性训练负荷"""
+        vo2_records = self.dataset.activity_vo2max_records
+        load_records = self.dataset.acute_training_load_records
+        endurance_records = self.dataset.endurance_score_records
+
+        key_metrics = []
+        insights = []
+
+        # VO2 Max 趋势
+        if vo2_records:
+            # 按 sport 分类
+            running_vo2 = [r for r in vo2_records if r.sport == "RUNNING"]
+            if running_vo2:
+                first_vo2 = running_vo2[0].vo2_max_value
+                last_vo2 = running_vo2[-1].vo2_max_value
+                avg_vo2 = _avg([r.vo2_max_value for r in running_vo2])
+
+                key_metrics.append({
+                    "name": "跑步 VO2 Max", "value": f"{last_vo2:.1f}" if last_vo2 else "N/A",
+                    "unit": "ml/kg/min",
+                    "trend": _trend_direction(last_vo2, first_vo2) if first_vo2 else "stable"
+                })
+                key_metrics.append({
+                    "name": "  历史均值", "value": f"{avg_vo2:.1f}" if avg_vo2 else "N/A",
+                    "unit": "ml/kg/min", "trend": "stable"
+                })
+                key_metrics.append({
+                    "name": "  测量次数", "value": f"{len(running_vo2)}",
+                    "unit": "次", "trend": "stable"
+                })
+
+                if first_vo2 and last_vo2:
+                    vo2_change = _pct_change(last_vo2, first_vo2)
+                    if vo2_change and vo2_change > 5:
+                        insights.append(Insight(
+                            category="vo2max", indicator="running_vo2max",
+                            trend="up", severity="positive",
+                            value_current=f"{last_vo2:.1f}",
+                            value_previous=f"{first_vo2:.1f}",
+                            summary="跑步 VO2 Max 提升",
+                            detail=f"从 {first_vo2:.1f} 提升至 {last_vo2:.1f} ml/kg/min (+{vo2_change:.1f}%)",
+                            recommendation="心肺功能改善明显，保持当前有氧训练节奏"
+                        ))
+                    elif vo2_change and vo2_change < -5:
+                        insights.append(Insight(
+                            category="vo2max", indicator="running_vo2max",
+                            trend="down", severity="warning",
+                            value_current=f"{last_vo2:.1f}",
+                            value_previous=f"{first_vo2:.1f}",
+                            summary="跑步 VO2 Max 下降",
+                            detail=f"从 {first_vo2:.1f} 降至 {last_vo2:.1f} ml/kg/min ({vo2_change:.1f}%)",
+                            recommendation="心肺功能下降，建议恢复规律有氧训练"
+                        ))
+
+        # 急性训练负荷 (ACWR)
+        if load_records:
+            recent_load, previous_load, _ = _split_recent(load_records)
+            r_acute = _avg([r.daily_training_load_acute for r in recent_load])
+            r_chronic = _avg([r.daily_training_load_chronic for r in recent_load])
+            r_acwr = _avg([r.acute_chronic_ratio for r in recent_load if r.acute_chronic_ratio is not None])
+
+            # ACWR 状态分布
+            acwr_status_counts = {}
+            for r in recent_load:
+                status = r.acwr_status or "UNKNOWN"
+                acwr_status_counts[status] = acwr_status_counts.get(status, 0) + 1
+
+            acwr_labels = {"LOW": "负荷不足", "OPTIMAL": "最佳负荷", "HIGH": "负荷过高", "UNKNOWN": "未知"}
+
+            key_metrics.append({
+                "name": "急性训练负荷(7天)", "value": f"{r_acute:.0f}" if r_acute else "N/A",
+                "unit": "", "trend": "stable"
+            })
+            key_metrics.append({
+                "name": "慢性训练负荷(28天)", "value": f"{r_chronic:.0f}" if r_chronic else "N/A",
+                "unit": "", "trend": "stable"
+            })
+            key_metrics.append({
+                "name": "ACWR(急性/慢性比)", "value": f"{r_acwr:.2f}" if r_acwr else "N/A",
+                "unit": "", "trend": "stable"
+            })
+
+            for status, count in sorted(acwr_status_counts.items(), key=lambda x: -x[1])[:3]:
+                key_metrics.append({
+                    "name": f"  {acwr_labels.get(status, status)}",
+                    "value": f"{count}天",
+                    "unit": f"({count/len(recent_load)*100:.0f}%)" if recent_load else "",
+                    "trend": "stable"
+                })
+
+            # ACWR 过高 → 受伤风险
+            high_days = acwr_status_counts.get("HIGH", 0)
+            if recent_load and high_days > len(recent_load) * 0.3:
+                insights.append(Insight(
+                    category="training_load", indicator="acwr_high",
+                    trend="up", severity="warning",
+                    value_current=f"ACWR过高: {high_days}天",
+                    value_previous="",
+                    summary="急性/慢性训练负荷比偏高",
+                    detail=f"近期 {high_days} 天 ACWR 处于 HIGH 状态，过度训练受伤风险增加",
+                    recommendation="降低训练量，让急性负荷下降至慢性负荷的0.8-1.3倍之间"
+                ))
+
+            # ACWR 过低 → 训练不足
+            low_days = acwr_status_counts.get("LOW", 0)
+            if recent_load and low_days > len(recent_load) * 0.5:
+                insights.append(Insight(
+                    category="training_load", indicator="acwr_low",
+                    trend="down", severity="info",
+                    value_current=f"ACWR过低: {low_days}天",
+                    value_previous="",
+                    summary="训练负荷不足",
+                    detail=f"近期 {low_days} 天 ACWR 处于 LOW 状态，训练刺激不足以提升体能",
+                    recommendation="适当增加训练量，但每周增幅不超过10%"
+                ))
+
+        # 耐力评分
+        if endurance_records:
+            first_e = endurance_records[0].overall_score
+            last_e = endurance_records[-1].overall_score
+
+            key_metrics.append({
+                "name": "耐力评分", "value": f"{last_e}" if last_e else "N/A",
+                "unit": "分",
+                "trend": _trend_direction(last_e, first_e) if first_e else "stable"
+            })
+
+            if first_e and last_e and last_e > first_e:
+                pct = ((last_e - first_e) / first_e) * 100
+                if pct > 10:
+                    insights.append(Insight(
+                        category="endurance", indicator="endurance_score",
+                        trend="up", severity="positive",
+                        value_current=f"{last_e}",
+                        value_previous=f"{first_e}",
+                        summary="耐力评分显著提升",
+                        detail=f"从 {first_e} 升至 {last_e} (+{pct:.1f}%)",
+                        recommendation="耐力持续改善，保持当前训练节奏"
+                    ))
+
+        if not insights:
+            insights.append(Insight(
+                category="vo2max", indicator="data_status",
+                trend="stable", severity="info",
+                value_current="已解析", value_previous="",
+                summary="VO2 Max 与训练负荷数据已分析",
+                detail=f"共 {len(vo2_records)} 条 VO2 Max 记录，{len(load_records)} 条负荷记录",
+                recommendation="定期进行跑步或骑行活动以获取更准确的 VO2 Max 估算"
+            ))
+
+        return ModuleReport(
+            module_name="vo2max_and_load",
+            title="VO2 Max 与训练负荷 / VO2 Max & Training Load",
+            data_overview={
+                "VO2 Max 记录": len(vo2_records),
+                "训练负荷记录": len(load_records),
+                "耐力评分记录": len(endurance_records),
+            },
+            key_metrics=key_metrics,
+            insights=insights,
+            period_comparison={}
+        )
+
     # ─── 综合报告 ──────────────────────────────────────
 
     def generate_full_report(self) -> FullReport:
-        """生成完整分析报告"""
+        """生成完整分析报告（P0 + P1）"""
         modules = [
             self.analyze_daily_wellness(),
             self.analyze_sleep(),
@@ -777,6 +1106,9 @@ class GarminAnalyzer:
             self.analyze_fitness(),
             self.analyze_race_predictions(),
             self.analyze_hr_zones(),
+            self.analyze_hydration(),
+            self.analyze_training_readiness(),
+            self.analyze_vo2max_and_load(),
         ]
 
         # 收集所有洞察，按严重程度排序
@@ -787,7 +1119,7 @@ class GarminAnalyzer:
         severity_order = {"critical": 0, "warning": 1, "positive": 2, "info": 3}
         all_insights.sort(key=lambda i: severity_order.get(i.severity, 99))
 
-        top_insights = all_insights[:5]
+        top_insights = all_insights[:8]
 
         # 生成总体评价
         positive_count = sum(1 for i in all_insights if i.severity == "positive")

@@ -135,6 +135,69 @@ class HydrationRecord:
     calendar_date: str
     value_in_ml: Optional[float] = None
     goal_in_ml: Optional[float] = None
+    sweat_loss_ml: Optional[float] = None
+    hydration_source: Optional[str] = None
+
+
+@dataclass
+class TrainingReadinessRecord:
+    """训练准备度"""
+    calendar_date: str
+    score: Optional[int] = None                   # 0-100
+    level: Optional[str] = None                   # HIGH, MEDIUM, LOW etc.
+    feedback_short: Optional[str] = None           # WELL_RECOVERED, etc.
+    sleep_score_factor: Optional[int] = None       # 睡眠因素百分比
+    sleep_score_factor_feedback: Optional[str] = None
+    recovery_time: Optional[int] = None            # 恢复时间(小时)
+    recovery_time_factor: Optional[int] = None
+    recovery_time_factor_feedback: Optional[str] = None
+    acwr_factor: Optional[int] = None              # 急性/慢性负荷比因素
+    acwr_factor_feedback: Optional[str] = None
+    stress_history_factor: Optional[int] = None
+    stress_history_factor_feedback: Optional[str] = None
+    hrv_factor: Optional[int] = None
+    hrv_factor_feedback: Optional[str] = None
+    acute_load: Optional[int] = None
+
+
+@dataclass
+class ActivityVo2MaxRecord:
+    """活动 VO2 Max"""
+    calendar_date: str
+    sport: Optional[str] = None
+    vo2_max_value: Optional[float] = None
+    activity_id: Optional[int] = None
+
+
+@dataclass
+class EnduranceScoreRecord:
+    """耐力评分"""
+    calendar_date: str
+    overall_score: Optional[int] = None
+    classification: Optional[int] = None
+    feedback_phrase: Optional[int] = None
+
+
+@dataclass
+class HillScoreRecord:
+    """爬坡评分"""
+    calendar_date: str
+    overall_score: Optional[int] = None
+    strength_score: Optional[int] = None
+    endurance_score: Optional[int] = None
+    classification: Optional[int] = None
+    feedback_phrase: Optional[int] = None
+
+
+@dataclass
+class AcuteTrainingLoadRecord:
+    """急性训练负荷"""
+    calendar_date: str
+    daily_training_load_acute: Optional[int] = None
+    daily_training_load_chronic: Optional[int] = None
+    acute_chronic_ratio: Optional[float] = None     # ACWR
+    acwr_status: Optional[str] = None              # LOW, OPTIMAL, HIGH
+    acwr_status_feedback: Optional[str] = None
 
 
 @dataclass
@@ -148,7 +211,12 @@ class GarminDataset:
     training_status_records: list = field(default_factory=list)
     heart_rate_zones: list = field(default_factory=list)
     hydration_records: list = field(default_factory=list)
-    data_date_range: dict = field(default_factory=dict)  # {"start": "...", "end": "..."}
+    training_readiness_records: list = field(default_factory=list)
+    activity_vo2max_records: list = field(default_factory=list)
+    endurance_score_records: list = field(default_factory=list)
+    hill_score_records: list = field(default_factory=list)
+    acute_training_load_records: list = field(default_factory=list)
+    data_date_range: dict = field(default_factory=dict)
     parse_errors: list = field(default_factory=list)
 
 
@@ -630,6 +698,189 @@ class GarminDataParser:
                         calendar_date=item.get("calendarDate", ""),
                         value_in_ml=_safe_float(item.get("valueInML")),
                         goal_in_ml=_safe_float(item.get("goalInML")),
+                        sweat_loss_ml=_safe_float(item.get("estimatedSweatLossInML")),
+                        hydration_source=item.get("hydrationSource", ""),
+                    )
+                    records.append(record)
+                except Exception:
+                    continue
+
+        records.sort(key=lambda r: r.calendar_date)
+        return records
+
+    def parse_training_readiness(self) -> list:
+        """解析训练准备度"""
+        records = []
+
+        for filepath in sorted(self._file_map.get("training_readiness", [])):
+            data = self._load_json(filepath)
+            if not data:
+                continue
+
+            if not isinstance(data, list):
+                data = [data]
+
+            for item in data:
+                if not item:
+                    continue
+                try:
+                    record = TrainingReadinessRecord(
+                        calendar_date=item.get("calendarDate", ""),
+                        score=_safe_int(item.get("score")),
+                        level=item.get("level", ""),
+                        feedback_short=item.get("feedbackShort", ""),
+                        sleep_score_factor=_safe_int(item.get("sleepScoreFactorPercent")),
+                        sleep_score_factor_feedback=item.get("sleepScoreFactorFeedback", ""),
+                        recovery_time=_safe_int(item.get("recoveryTime")),
+                        recovery_time_factor=_safe_int(item.get("recoveryTimeFactorPercent")),
+                        recovery_time_factor_feedback=item.get("recoveryTimeFactorFeedback", ""),
+                        acwr_factor=_safe_int(item.get("acwrFactorPercent")),
+                        acwr_factor_feedback=item.get("acwrFactorFeedback", ""),
+                        stress_history_factor=_safe_int(item.get("stressHistoryFactorPercent")),
+                        stress_history_factor_feedback=item.get("stressHistoryFactorFeedback", ""),
+                        hrv_factor=_safe_int(item.get("hrvFactorPercent")),
+                        hrv_factor_feedback=item.get("hrvFactorFeedback", ""),
+                        acute_load=_safe_int(item.get("acuteLoad")),
+                    )
+                    records.append(record)
+                except Exception:
+                    continue
+
+        records.sort(key=lambda r: r.calendar_date)
+        return records
+
+    def parse_activity_vo2max(self) -> list:
+        """解析活动 VO2 Max"""
+        records = []
+
+        for filepath in sorted(self._file_map.get("vo2max", [])):
+            data = self._load_json(filepath)
+            if not data:
+                continue
+
+            if not isinstance(data, list):
+                data = [data]
+
+            for item in data:
+                if not item:
+                    continue
+                try:
+                    record = ActivityVo2MaxRecord(
+                        calendar_date=item.get("calendarDate", ""),
+                        sport=item.get("sport", ""),
+                        vo2_max_value=_safe_float(item.get("vo2MaxValue")),
+                        activity_id=_safe_int(item.get("activityId")),
+                    )
+                    records.append(record)
+                except Exception:
+                    continue
+
+        records.sort(key=lambda r: r.calendar_date)
+        return records
+
+    def parse_endurance_score(self) -> list:
+        """解析耐力评分"""
+        records = []
+
+        for filepath in sorted(self._file_map.get("endurance_score", [])):
+            data = self._load_json(filepath)
+            if not data:
+                continue
+
+            if not isinstance(data, list):
+                data = [data]
+
+            for item in data:
+                if not item:
+                    continue
+                try:
+                    # calendarDate 可能是毫秒时间戳
+                    cal_date = item.get("calendarDate", "")
+                    if isinstance(cal_date, (int, float)) and cal_date > 10000:
+                        cal_date = _parse_timestamp(cal_date / 1000) or str(cal_date)
+                        # 只取日期部分
+                        if "T" in cal_date:
+                            cal_date = cal_date[:10]
+
+                    record = EnduranceScoreRecord(
+                        calendar_date=str(cal_date),
+                        overall_score=_safe_int(item.get("overallScore")),
+                        classification=_safe_int(item.get("classification")),
+                        feedback_phrase=_safe_int(item.get("feedbackPhrase")),
+                    )
+                    records.append(record)
+                except Exception:
+                    continue
+
+        records.sort(key=lambda r: r.calendar_date)
+        return records
+
+    def parse_hill_score(self) -> list:
+        """解析爬坡评分"""
+        records = []
+
+        for filepath in sorted(self._file_map.get("hill_score", [])):
+            data = self._load_json(filepath)
+            if not data:
+                continue
+
+            if not isinstance(data, list):
+                data = [data]
+
+            for item in data:
+                if not item:
+                    continue
+                try:
+                    cal_date = item.get("calendarDate", "")
+                    if isinstance(cal_date, (int, float)) and cal_date > 10000:
+                        cal_date = _parse_timestamp(cal_date / 1000) or str(cal_date)
+                        if "T" in str(cal_date):
+                            cal_date = str(cal_date)[:10]
+
+                    record = HillScoreRecord(
+                        calendar_date=str(cal_date),
+                        overall_score=_safe_int(item.get("overallScore")),
+                        strength_score=_safe_int(item.get("strengthScore")),
+                        endurance_score=_safe_int(item.get("enduranceScore")),
+                        classification=_safe_int(item.get("hillScoreClassificationId")),
+                        feedback_phrase=_safe_int(item.get("hillScoreFeedbackPhraseId")),
+                    )
+                    records.append(record)
+                except Exception:
+                    continue
+
+        records.sort(key=lambda r: r.calendar_date)
+        return records
+
+    def parse_acute_training_load(self) -> list:
+        """解析急性训练负荷"""
+        records = []
+
+        for filepath in sorted(self._file_map.get("acute_training_load", [])):
+            data = self._load_json(filepath)
+            if not data:
+                continue
+
+            if not isinstance(data, list):
+                data = [data]
+
+            for item in data:
+                if not item:
+                    continue
+                try:
+                    cal_date = item.get("calendarDate", "")
+                    if isinstance(cal_date, (int, float)) and cal_date > 10000:
+                        cal_date = _parse_timestamp(cal_date / 1000) or str(cal_date)
+                        if "T" in str(cal_date):
+                            cal_date = str(cal_date)[:10]
+
+                    record = AcuteTrainingLoadRecord(
+                        calendar_date=str(cal_date),
+                        daily_training_load_acute=_safe_int(item.get("dailyTrainingLoadAcute")),
+                        daily_training_load_chronic=_safe_int(item.get("dailyTrainingLoadChronic")),
+                        acute_chronic_ratio=_safe_float(item.get("dailyAcuteChronicWorkloadRatio")),
+                        acwr_status=item.get("acwrStatus", ""),
+                        acwr_status_feedback=item.get("acwrStatusFeedback", ""),
                     )
                     records.append(record)
                 except Exception:
@@ -640,7 +891,7 @@ class GarminDataParser:
 
     def parse_all(self) -> GarminDataset:
         """
-        一键解析所有 P0 数据
+        一键解析所有 P0 + P1 数据
 
         返回:
             GarminDataset 对象，包含所有解析结果
@@ -654,14 +905,21 @@ class GarminDataParser:
         # 解析用户信息
         dataset.user_info = self.parse_customer()
 
-        # 解析各类数据
+        # P0 数据
         dataset.daily_summaries = self.parse_daily_summary()
         dataset.sleep_records = self.parse_sleep()
         dataset.fitness_age_records = self.parse_fitness_age()
         dataset.race_predictions = self.parse_race_predictions()
         dataset.training_status_records = self.parse_training_history()
         dataset.heart_rate_zones = self.parse_hr_zones()
+
+        # P1 数据
         dataset.hydration_records = self.parse_hydration()
+        dataset.training_readiness_records = self.parse_training_readiness()
+        dataset.activity_vo2max_records = self.parse_activity_vo2max()
+        dataset.endurance_score_records = self.parse_endurance_score()
+        dataset.hill_score_records = self.parse_hill_score()
+        dataset.acute_training_load_records = self.parse_acute_training_load()
 
         # 计算数据日期范围
         all_dates = []
@@ -745,6 +1003,11 @@ if __name__ == "__main__":
         print(f"  训练状态记录: {len(dataset.training_status_records)}")
         print(f"  心率区间配置: {len(dataset.heart_rate_zones)}")
         print(f"  饮水记录: {len(dataset.hydration_records)}")
+        print(f"  训练准备度: {len(dataset.training_readiness_records)}")
+        print(f"  活动VO2 Max: {len(dataset.activity_vo2max_records)}")
+        print(f"  耐力评分: {len(dataset.endurance_score_records)}")
+        print(f"  爬坡评分: {len(dataset.hill_score_records)}")
+        print(f"  急性训练负荷: {len(dataset.acute_training_load_records)}")
 
         if dataset.parse_errors:
             print(f"\n  [!] 解析错误: {len(dataset.parse_errors)}")
